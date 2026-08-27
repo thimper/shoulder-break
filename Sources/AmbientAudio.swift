@@ -262,10 +262,16 @@ final class AmbientAudio {
 
     /// 打开一个音频文件循环播放。支持系统能解的格式:mp3 / m4a / wav / aiff / flac 等。
     private func startFile(path: String, volume: Double, muted: Bool, fadeIn: Double) -> Bool {
-        let expanded = (path as NSString).expandingTildeInPath
-        guard !expanded.isEmpty else {
-            Log.warn("没有指定背景音乐文件(配置里的 ambientFile 是空的)")
-            return false
+        var expanded = (path as NSString).expandingTildeInPath
+        if expanded.isEmpty {
+            // 没指定就用程序自带的那首(打包在 app 里,装完就能用)
+            if let bundled = Bundle.main.url(forResource: "chopin-nocturne-op9-no2",
+                                             withExtension: "mp3") {
+                expanded = bundled.path
+            } else {
+                Log.warn("没有指定背景音乐,也没找到自带的那首")
+                return false
+            }
         }
         let url = URL(fileURLWithPath: expanded)
         guard FileManager.default.fileExists(atPath: url.path) else {

@@ -78,8 +78,8 @@ shoulder-break quit      # 停掉服务
 | `soundEnabled` | true | 提示音 |
 | `affectedSide` | `right` | 患侧是哪边:`right` / `left` / `both`,决定示意图高亮哪只手臂 |
 | `sleepResetMinutes` | 10 | 休眠超过这么多分钟就当作你已经离开休息过,醒来重新开始完整计时;不到就只把睡掉的时间补回去 |
-| `ambientStyle` | `bowl` | 背景音风格:`bowl` / `rain` / `pad-warm` / `pad-low` / `file` / `off` |
-| `ambientFile` | `""` | `ambientStyle` 为 `file` 时播放的音频路径 |
+| `ambientStyle` | `file` | 背景音风格:`bowl` / `rain` / `pad-warm` / `pad-low` / `file` / `off` |
+| `ambientFile` | `""` | `file` 模式播放的音频路径。留空则用程序自带的那首 |
 | `ambientEnabled` | `true` | 背景音总开关 |
 | `ambientVolume` | `0.20` | 背景音音量 0–1,默认压得很低 |
 | `stepChimeEnabled` | `true` | 动作切换提示音 |
@@ -95,8 +95,8 @@ shoulder-break quit      # 停掉服务
 
 - **提示音**:动作切换时响一声,整套做完时是一串**三音上行**,明显区别于换动作。
   响的瞬间背景会自动压低、响完抬回,所以背景放什么都盖不住它。
-- **背景音**:默认是**颂钵**——每次呼吸敲一到两个音,让它自己衰减完,音符之间留白。
-  用五声音阶,随便怎么撞都不会出难听的和声。
+- **背景音**:默认放程序**自带的肖邦夜曲 Op.9 No.2**(CC0 公有领域,已打包进 app,
+  装完就能用)。也可以换成自己的音乐,或者切到几种代码实时合成的音色。
 
 **呼吸引导**直接长在背景音里:吸气起头敲一个高音、呼气起头敲一个低音,
 黑幕上配一个跟着张缩的圆环。拉伸时跟着呼气能让肌肉放松、活动度更大。
@@ -113,7 +113,7 @@ shoulder-break quit      # 停掉服务
 | `rain` | 雨声,没有旋律,最不占注意力 |
 | `pad-warm` | 温暖和弦长音 |
 | `pad-low` | 低音区和弦长音(注意:笔记本扬声器基本发不出 130Hz,容易糊成嗡嗡声) |
-| `file` | 放你自己的音频,路径写在 `ambientFile`,循环播放 |
+| `file` | 放音频文件(**默认**)。`ambientFile` 留空就用程序自带的肖邦夜曲 |
 | `off` | 不要背景音,只留提示音 |
 
 放自己的音乐:
@@ -124,7 +124,7 @@ shoulder-break quit      # 停掉服务
 ./set-music.sh off                   # 改回合成音
 ```
 
-免版权的古典钢琴可以从 [Musopen 在 archive.org 的合集](https://archive.org/details/musopen-chopin)
+程序自带的那首就是这么来的,详见 `assets/music/CREDITS.md`。更多免版权古典钢琴可以从 [Musopen 在 archive.org 的合集](https://archive.org/details/musopen-chopin)
 拿,那批录音是 CC0(完全公有领域,随便用)。肖邦夜曲 Op.9 No.2 全程平稳、没有
 突然激昂的段落,适合拉伸时听——不少夜曲中段会突然变澎湃,正拉着会被吓一跳。
 

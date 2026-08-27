@@ -26,6 +26,11 @@ swiftc \
 
 cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"
 
+# 自带的背景音乐一起打进去,新装的人不用自己找歌
+if [ -d assets/music ]; then
+	cp assets/music/*.mp3 "$APP_DIR/Contents/Resources/" 2>/dev/null || true
+fi
+
 echo "==> 本地签名(未签名的 app 在部分系统上拿不到菜单栏图标)"
 codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || echo "    (签名跳过,不影响本机使用)"
 

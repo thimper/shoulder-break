@@ -34,9 +34,10 @@ struct Config {
     var sleepResetMinutes: Int = 10
 
     /// 黑幕期间的背景音。风格:
-    /// bowl 颂钵(默认,音符卡在呼吸节拍上)/ rain 雨声 /
+    /// file 放音频文件(默认,不填 ambientFile 就用程序自带的肖邦夜曲)/
+    /// bowl 颂钵(音符卡在呼吸节拍上)/ rain 雨声 /
     /// pad-warm 温暖和弦 / pad-low 低音和弦 / off 关掉
-    var ambientStyle: String = "bowl"
+    var ambientStyle: String = "file"
     var ambientEnabled: Bool = true
     /// ambientStyle 设成 "file" 时,放这个路径的音频循环播放。
     /// 支持 mp3 / m4a / wav / aiff / flac,写 ~ 开头的路径也行

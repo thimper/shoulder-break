@@ -22,12 +22,13 @@
   "soundEnabled": true,
   "affectedSide": "right",
   "sleepResetMinutes": 10,
-  "ambientStyle": "bowl",
+  "ambientStyle": "file",
   "ambientEnabled": true,
   "ambientVolume": 0.2,
   "stepChimeEnabled": true,
   "chimeVolume": 1.0,
   "breathingGuide": true,
   "breathInSeconds": 4,
-  "breathOutSeconds": 6
+  "breathOutSeconds": 6,
+  "ambientFile": ""
 }
