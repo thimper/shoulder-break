@@ -202,6 +202,10 @@ final class AmbientAudio {
     private var sourceNode: AVAudioSourceNode?
     private var chimePlayer: AVAudioPlayerNode?
     private var configObserver: NSObjectProtocol?
+    /// 放音频文件走这个,和合成音那套完全分开:
+    /// 系统自带的播放器已经处理好了解码和循环,没必要自己造
+    private var filePlayer: AVAudioPlayer?
+    private var fileVolume: Double = 0.28
     private var sampleRate: Double = 44100
 
     /// 下面这几个值由主线程写、音频线程读。
@@ -229,8 +233,16 @@ final class AmbientAudio {
     /// 开始播放背景音,带淡入。重复调用是安全的。
     func start(style: AmbientStyle, volume: Double, muted: Bool, breathing: Bool,
                breathInSeconds: Double, breathOutSeconds: Double,
+               filePath: String = "",
                fadeInSeconds: Double = 2.0) {
         self.style = style
+        if style == .file {
+            // 文件放不出来就退回颂钵,总比一声不响强
+            if !startFile(path: filePath, volume: volume, muted: muted,
+                          fadeIn: fadeInSeconds) {
+                self.style = .bowl
+            }
+        }
         self.baseVolume = min(max(volume, 0), 1)
         self.muted = muted
         self.breathingOn = breathing
@@ -247,8 +259,46 @@ final class AmbientAudio {
         fadeTo(muted ? 0 : 1, over: fadeInSeconds)
     }
 
+    /// 打开一个音频文件循环播放。支持系统能解的格式:mp3 / m4a / wav / aiff / flac 等。
+    private func startFile(path: String, volume: Double, muted: Bool, fadeIn: Double) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        guard !expanded.isEmpty else {
+            Log.warn("没有指定背景音乐文件(配置里的 ambientFile 是空的)")
+            return false
+        }
+        let url = URL(fileURLWithPath: expanded)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            Log.warn("背景音乐文件找不到:\(url.path)")
+            return false
+        }
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.numberOfLoops = -1          // 一直循环,直到黑幕结束
+            player.volume = 0
+            player.prepareToPlay()
+            player.play()
+            // 从 0 慢慢推上去,不会突然炸响
+            player.setVolume(muted ? 0 : Float(min(max(volume, 0), 1)),
+                             fadeDuration: fadeIn)
+            filePlayer = player
+            fileVolume = min(max(volume, 0), 1)
+            Log.info("背景音乐:\(url.lastPathComponent)(时长 \(Int(player.duration)) 秒,循环播放)")
+            return true
+        } catch {
+            Log.warn("背景音乐读不了,可能格式不支持:\(error.localizedDescription)")
+            return false
+        }
+    }
+
     /// 淡出并停止。淡出走完才真正拆掉引擎,避免尾部爆音。
     func stop(fadeOutSeconds: Double = 0.8) {
+        if let player = filePlayer {
+            player.setVolume(0, fadeDuration: fadeOutSeconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + fadeOutSeconds + 0.1) { [weak self] in
+                self?.filePlayer?.stop()
+                self?.filePlayer = nil
+            }
+        }
         guard isRunning else { return }
         fadeTo(0, over: fadeOutSeconds)
         let delay = fadeOutSeconds + 0.15
@@ -259,6 +309,7 @@ final class AmbientAudio {
 
     func setMuted(_ on: Bool) {
         muted = on
+        filePlayer?.setVolume(on ? 0 : Float(fileVolume), fadeDuration: 0.45)
         guard isRunning else { return }
         fadeTo(on ? 0 : 1, over: 0.45)
     }
@@ -323,10 +374,18 @@ final class AmbientAudio {
 
         // 这个回调跑在实时音频线程上:不能分配内存、不能加锁、不能打日志,
         // 否则会掉采样、听到爆音。下面只有浮点运算。
+        // 放文件的时候合成器不出声,但引擎还要留着给提示音用
+        let synthesizing = (style != .file)
         let node = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
             guard let self else { return noErr }
             let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
 
+            if !synthesizing {
+                for buffer in buffers {
+                    memset(buffer.mData, 0, Int(buffer.mDataByteSize))
+                }
+                return noErr
+            }
             for frame in 0..<Int(frameCount) {
                 // 音量朝目标平滑靠拢(淡入淡出)
                 if self.currentLevel < self.targetLevel {
@@ -353,6 +412,8 @@ final class AmbientAudio {
                     raw = self.synth.nextSample(breathing: self.breathingOn,
                                                 breathIn: self.breathIn,
                                                 breathOut: self.breathOut)
+                case .file:
+                    raw = 0   // 放文件时这条链路不出声
                 }
                 let value = Float(raw * self.baseVolume * self.currentLevel)
 
@@ -550,6 +611,7 @@ enum AmbientStyle: String, CaseIterable {
     case padWarm  = "pad-warm"   // 改良:音区抬高 + 削掉高频毛刺
     case bowl     = "bowl"       // 颂钵:音符缓慢飘落,之间留白
     case rain     = "rain"       // 雨声:柔和噪音,没有旋律
+    case file     = "file"       // 放你自己的音频文件,循环播放
 }
 
 extension AmbientAudio {
@@ -585,6 +647,8 @@ extension AmbientAudio {
                                                               inhale: breathIn, exhale: breathOut)
             case .padLow, .padWarm:
                 raw = chord.nextSample(breathing: true, breathIn: breathIn, breathOut: breathOut)
+            case .file:
+                raw = 0   // 放的是你自己的文件,没什么可合成的
             }
             var level = 1.0
             if t < 2.0 { level = t / 2.0 }

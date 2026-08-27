@@ -239,6 +239,7 @@ final class Scheduler {
             affectedSide: config.affectedSide,
             playSound: config.soundEnabled && !resumed,
             audio: AudioSettings(ambientStyle: AmbientStyle(rawValue: config.ambientStyle) ?? .bowl,
+                                 ambientFile: config.ambientFile,
                                  ambientEnabled: config.ambientEnabled && config.soundEnabled,
                                  ambientVolume: config.ambientVolume,
                                  stepChimeEnabled: config.stepChimeEnabled && config.soundEnabled,

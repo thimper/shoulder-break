@@ -101,7 +101,7 @@ case "audition":
         let secs = args.count > 3 ? (Double(args[3]) ?? 22) : 22
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.prohibited)
-        for style in AmbientStyle.allCases {
+        for style in AmbientStyle.allCases where style != .file {
             let path = "\(dir)/sb-\(style.rawValue).caf"
             let ok = AmbientAudio.shared.exportStyle(style, to: path,
                                                     seconds: secs, volume: 0.42)

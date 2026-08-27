@@ -38,6 +38,9 @@ struct Config {
     /// pad-warm 温暖和弦 / pad-low 低音和弦 / off 关掉
     var ambientStyle: String = "bowl"
     var ambientEnabled: Bool = true
+    /// ambientStyle 设成 "file" 时,放这个路径的音频循环播放。
+    /// 支持 mp3 / m4a / wav / aiff / flac,写 ~ 开头的路径也行
+    var ambientFile: String = ""
     var ambientVolume: Double = 0.28
     /// 动作切换时响一声,不用盯着屏幕也知道该换了
     var stepChimeEnabled: Bool = true
@@ -70,6 +73,7 @@ extension Config: Codable {
         sleepResetMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepResetMinutes) ?? d.sleepResetMinutes
         ambientStyle = try c.decodeIfPresent(String.self, forKey: .ambientStyle) ?? d.ambientStyle
         ambientEnabled = try c.decodeIfPresent(Bool.self, forKey: .ambientEnabled) ?? d.ambientEnabled
+        ambientFile = try c.decodeIfPresent(String.self, forKey: .ambientFile) ?? d.ambientFile
         ambientVolume = try c.decodeIfPresent(Double.self, forKey: .ambientVolume) ?? d.ambientVolume
         stepChimeEnabled = try c.decodeIfPresent(Bool.self, forKey: .stepChimeEnabled) ?? d.stepChimeEnabled
         chimeVolume = try c.decodeIfPresent(Double.self, forKey: .chimeVolume) ?? d.chimeVolume
@@ -91,7 +95,7 @@ extension Config: Codable {
         if mode != "interval" && mode != "fixed" { mode = "interval" }
         if !["right", "left", "both"].contains(affectedSide) { affectedSide = "right" }
         sleepResetMinutes = min(max(sleepResetMinutes, 1), 240)
-        if !["bowl", "rain", "pad-warm", "pad-low", "off"].contains(ambientStyle) {
+        if !["bowl", "rain", "pad-warm", "pad-low", "file", "off"].contains(ambientStyle) {
             ambientStyle = "bowl"
         }
         if ambientStyle == "off" { ambientEnabled = false }

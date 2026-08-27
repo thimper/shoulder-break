@@ -78,7 +78,8 @@ shoulder-break quit      # 停掉服务
 | `soundEnabled` | true | 提示音 |
 | `affectedSide` | `right` | 患侧是哪边:`right` / `left` / `both`,决定示意图高亮哪只手臂 |
 | `sleepResetMinutes` | 10 | 休眠超过这么多分钟就当作你已经离开休息过,醒来重新开始完整计时;不到就只把睡掉的时间补回去 |
-| `ambientStyle` | `bowl` | 背景音风格:`bowl` / `rain` / `pad-warm` / `pad-low` / `off` |
+| `ambientStyle` | `bowl` | 背景音风格:`bowl` / `rain` / `pad-warm` / `pad-low` / `file` / `off` |
+| `ambientFile` | `""` | `ambientStyle` 为 `file` 时播放的音频路径 |
 | `ambientEnabled` | `true` | 背景音总开关 |
 | `ambientVolume` | `0.28` | 背景音音量 0–1,默认压得很低 |
 | `stepChimeEnabled` | `true` | 动作切换提示音 |
@@ -111,7 +112,20 @@ shoulder-break quit      # 停掉服务
 | `rain` | 雨声,没有旋律,最不占注意力 |
 | `pad-warm` | 温暖和弦长音 |
 | `pad-low` | 低音区和弦长音(注意:笔记本扬声器基本发不出 130Hz,容易糊成嗡嗡声) |
+| `file` | 放你自己的音频,路径写在 `ambientFile`,循环播放 |
 | `off` | 不要背景音,只留提示音 |
+
+放自己的音乐:
+
+```bash
+./set-music.sh ~/Music/relax.mp3     # 换曲
+./set-music.sh                       # 列出现有曲目
+./set-music.sh off                   # 改回合成音
+```
+
+免版权的古典钢琴可以从 [Musopen 在 archive.org 的合集](https://archive.org/details/musopen-chopin)
+拿,那批录音是 CC0(完全公有领域,随便用)。肖邦夜曲 Op.9 No.2 全程平稳、没有
+突然激昂的段落,适合拉伸时听——不少夜曲中段会突然变澎湃,正拉着会被吓一跳。
 
 自己导出来试听,不用等到黑幕弹出来:
 

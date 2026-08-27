@@ -11,6 +11,7 @@ final class OverlayWindow: NSWindow {
 /// 黑幕里跟声音有关的一组设置,打包传进来免得参数列表越拖越长
 struct AudioSettings {
     var ambientStyle: AmbientStyle
+    var ambientFile: String
     var ambientEnabled: Bool
     var ambientVolume: Double
     var stepChimeEnabled: Bool
@@ -57,7 +58,7 @@ final class OverlayController {
     /// 用户在黑幕上点了静音,通知外面记进状态文件
     var onMuteChanged: ((Bool) -> Void)?
 
-    private var audio = AudioSettings(ambientStyle: .bowl, ambientEnabled: false, ambientVolume: 0.28,
+    private var audio = AudioSettings(ambientStyle: .bowl, ambientFile: "", ambientEnabled: false, ambientVolume: 0.28,
                                       stepChimeEnabled: false, chimeVolume: 0.45,
                                       breathingGuide: false,
                                       breathInSeconds: 4, breathOutSeconds: 6)
@@ -366,7 +367,8 @@ final class OverlayController {
                                   muted: muted,
                                   breathing: audio.breathingGuide,
                                   breathInSeconds: audio.breathInSeconds,
-                                  breathOutSeconds: audio.breathOutSeconds)
+                                  breathOutSeconds: audio.breathOutSeconds,
+                                  filePath: audio.ambientFile)
     }
 
     private func toggleMute() {
