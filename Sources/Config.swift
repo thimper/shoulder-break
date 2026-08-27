@@ -44,7 +44,7 @@ struct Config {
     var ambientVolume: Double = 0.28
     /// 动作切换时响一声,不用盯着屏幕也知道该换了
     var stepChimeEnabled: Bool = true
-    var chimeVolume: Double = 0.45
+    var chimeVolume: Double = 0.75
     /// 呼吸引导:背景音跟着涨落,黑幕上配一个张缩的圆环。
     /// 拉伸时呼气能让肌肉放松、活动度更大
     var breathingGuide: Bool = true

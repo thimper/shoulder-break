@@ -24,9 +24,9 @@
   "sleepResetMinutes": 10,
   "ambientStyle": "bowl",
   "ambientEnabled": true,
-  "ambientVolume": 0.28,
+  "ambientVolume": 0.2,
   "stepChimeEnabled": true,
-  "chimeVolume": 0.45,
+  "chimeVolume": 1.0,
   "breathingGuide": true,
   "breathInSeconds": 4,
   "breathOutSeconds": 6

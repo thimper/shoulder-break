@@ -81,9 +81,9 @@ shoulder-break quit      # 停掉服务
 | `ambientStyle` | `bowl` | 背景音风格:`bowl` / `rain` / `pad-warm` / `pad-low` / `file` / `off` |
 | `ambientFile` | `""` | `ambientStyle` 为 `file` 时播放的音频路径 |
 | `ambientEnabled` | `true` | 背景音总开关 |
-| `ambientVolume` | `0.28` | 背景音音量 0–1,默认压得很低 |
+| `ambientVolume` | `0.20` | 背景音音量 0–1,默认压得很低 |
 | `stepChimeEnabled` | `true` | 动作切换提示音 |
-| `chimeVolume` | `0.45` | 提示音音量 |
+| `chimeVolume` | `1.0` | 提示音音量。响提示音时背景会自动压到 14%,响完抬回,所以背景放什么都盖不住它 |
 | `breathingGuide` | `true` | 呼吸引导(圆环 + 声音节拍) |
 | `breathInSeconds` | `4` | 吸气秒数 |
 | `breathOutSeconds` | `6` | 呼气秒数 |
@@ -93,7 +93,8 @@ shoulder-break quit      # 停掉服务
 黑幕里的声音分两层,都是**代码实时算出来的**,不打包任何音频文件——
 没有版权问题、仓库不增重,提示音和背景音还落在同一个调上,听起来是一体的。
 
-- **提示音**:动作切换时响一声,全部做完时一个上行双音。像木琴那样轻,响完就没。
+- **提示音**:动作切换时响一声,整套做完时是一串**三音上行**,明显区别于换动作。
+  响的瞬间背景会自动压低、响完抬回,所以背景放什么都盖不住它。
 - **背景音**:默认是**颂钵**——每次呼吸敲一到两个音,让它自己衰减完,音符之间留白。
   用五声音阶,随便怎么撞都不会出难听的和声。
 

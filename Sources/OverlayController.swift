@@ -131,8 +131,9 @@ final class OverlayController {
             if audio.stepChimeEnabled {
                 AmbientAudio.shared.playCompletionChime(volume: audio.chimeVolume)
             }
-            // 让"完成"画面停留一下再撤,免得屏幕闪一下就没了
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            // 停留时间要盖过完成音的长度(三个音加上衰减约 2.4 秒),
+            // 否则引擎在音还没响完就被拆了,听上去像被掐断
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) { [weak self] in
                 self?.teardown(result)
             }
         } else {

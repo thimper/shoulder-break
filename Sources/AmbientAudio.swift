@@ -206,6 +206,7 @@ final class AmbientAudio {
     /// 系统自带的播放器已经处理好了解码和循环,没必要自己造
     private var filePlayer: AVAudioPlayer?
     private var fileVolume: Double = 0.28
+    private var duckToken: UInt64 = 0
     private var sampleRate: Double = 44100
 
     /// 下面这几个值由主线程写、音频线程读。
@@ -317,11 +318,14 @@ final class AmbientAudio {
     /// 动作切换的提示音
     func playStepChime(volume: Double) {
         playChime(frequencies: [(chimeStep, 0.0)], volume: volume)
+        duckBackground(for: 1.3)
     }
 
-    /// 全部做完的上行双音
+    /// 全部做完:三个音往上走,比切换音更长更亮,一听就知道是"整套结束"而不是"换下一个"
     func playCompletionChime(volume: Double) {
-        playChime(frequencies: [(chimeDoneLow, 0.0), (chimeDoneHigh, 0.15)], volume: volume)
+        playChime(frequencies: [(523.25, 0.0), (659.25, 0.16), (783.99, 0.32)],
+                  volume: min(1.0, volume * 1.25), decay: 2.4)
+        duckBackground(for: 2.6)
     }
 
     /// 界面上的呼吸圆环用这个算张缩,和背景音共用同一套公式,保证看到的和听到的一致。
@@ -567,9 +571,25 @@ final class AmbientAudio {
 
     /// 提示音走独立的播放节点,播的是事先算好的一段波形。
     /// 这样就不用在实时线程里维护事件队列,省掉一堆无锁编程的麻烦。
-    private func playChime(frequencies: [(Double, Double)], volume: Double) {
+    /// 提示音期间把背景音压低,响完再抬回来。
+    /// 这样不管背景放的是什么、多大声,提示音都盖得过去。
+    private func duckBackground(for seconds: Double) {
+        duckToken &+= 1
+        let token = duckToken
+        let ducked = 0.14
+        filePlayer?.setVolume(muted ? 0 : Float(fileVolume * ducked), fadeDuration: 0.08)
+        if isRunning && !muted { fadeTo(ducked, over: 0.08) }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.duckToken == token else { return }   // 又响了新的就别抢
+            self.filePlayer?.setVolume(self.muted ? 0 : Float(self.fileVolume), fadeDuration: 0.6)
+            if self.isRunning { self.fadeTo(self.muted ? 0 : 1, over: 0.6) }
+        }
+    }
+
+    private func playChime(frequencies: [(Double, Double)], volume: Double,
+                           decay: Double = 1.25) {
         guard let player = chimePlayer, isRunning else { return }
-        let decay = 1.25
         let tail = (frequencies.map { $0.1 }.max() ?? 0) + decay
         let frames = AVAudioFrameCount(sampleRate * tail)
         guard frames > 0,
@@ -592,7 +612,7 @@ final class AmbientAudio {
                     let base = sin(2 * .pi * freq * t)
                     let h2 = 0.22 * sin(2 * .pi * freq * 2 * t) * exp(-t * 7)
                     let h3 = 0.08 * sin(2 * .pi * freq * 3 * t) * exp(-t * 11)
-                    data[i] += Float((base + h2 + h3) * env * 0.20 * vol)
+                    data[i] += Float((base + h2 + h3) * env * 0.70 * vol)
                 }
             }
         }
