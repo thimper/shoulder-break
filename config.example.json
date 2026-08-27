@@ -20,5 +20,6 @@
   "idleSkipSeconds": 180,
   "escapeHoldSeconds": 10,
   "soundEnabled": true,
-  "affectedSide": "right"
+  "affectedSide": "right",
+  "sleepResetMinutes": 10
 }

@@ -29,6 +29,9 @@ struct Config {
     var soundEnabled: Bool = true
     /// 患侧:"right" / "left" / "both"。示意图里这一侧的手臂会高亮
     var affectedSide: String = "right"
+    /// 休眠/合盖超过这么多分钟,就认为你已经离开过、肩膀歇过了,
+    /// 醒来重新开始完整计时;不到这个数就只是把错过的时间补回去
+    var sleepResetMinutes: Int = 10
 }
 
 // 放在 extension 里实现 Codable,这样 Swift 仍会自动生成带默认值的逐成员构造器,
@@ -49,6 +52,7 @@ extension Config: Codable {
         escapeHoldSeconds = try c.decodeIfPresent(Int.self, forKey: .escapeHoldSeconds) ?? d.escapeHoldSeconds
         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
         affectedSide = try c.decodeIfPresent(String.self, forKey: .affectedSide) ?? d.affectedSide
+        sleepResetMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepResetMinutes) ?? d.sleepResetMinutes
         clampToSaneRanges()
     }
 
@@ -63,6 +67,7 @@ extension Config: Codable {
         escapeHoldSeconds = min(max(escapeHoldSeconds, 1), 60)
         if mode != "interval" && mode != "fixed" { mode = "interval" }
         if !["right", "left", "both"].contains(affectedSide) { affectedSide = "right" }
+        sleepResetMinutes = min(max(sleepResetMinutes, 1), 240)
     }
 }
 

@@ -26,6 +26,8 @@ Mac 上的**强制**肩周活动提醒。到点用全屏黑幕盖住所有屏幕
 | 3 分钟没碰键鼠就跳过本次 | 你已经离开电脑了,本身就是在休息,不该等你一回座位就黑屏 |
 | 屏幕锁着 / 切了用户就不弹 | 人根本不在,弹了只会留下一堆「做过了」的假记录 |
 | 合盖睡眠期间错过的不补弹 | 睡了两小时不会醒来连弹三次 |
+| 休眠的时间不算在计时里 | 合盖那阵子肩膀没在受累。小憩就把睡掉的时间补回去接着算;睡超过 10 分钟当作你已经离开休息过,醒来重新开始完整计时,而不是刚坐下就弹 |
+| 活动中合盖,倒计时跟着停 | 黑幕弹出就合盖、过会儿再打开,不会白捡一次——剩下的秒数原样接着走 |
 | 菜单栏可「暂停 1 小时」 | 开会、演讲、录屏时用 |
 | 生效时段外不打扰 | 默认 09:00–22:00 |
 | 被 kill 掉会秒级复活并恢复黑幕 | 剩余时间接着算,杀进程只能换来几秒 |
@@ -73,6 +75,7 @@ shoulder-break quit      # 停掉服务
 | `escapeHoldSeconds` | 10 | 长按 Esc 多少秒才能强制解除 |
 | `soundEnabled` | true | 提示音 |
 | `affectedSide` | `right` | 患侧是哪边:`right` / `left` / `both`,决定示意图高亮哪只手臂 |
+| `sleepResetMinutes` | 10 | 休眠超过这么多分钟就当作你已经离开休息过,醒来重新开始完整计时;不到就只把睡掉的时间补回去 |
 
 ## 黑幕上只有三个按键有用
 
@@ -154,6 +157,9 @@ build/ShoulderBreak.app/Contents/MacOS/ShoulderBreak preview out.png --at=95 --f
 build/ShoulderBreak.app/Contents/MacOS/ShoulderBreak figure wallwalk out.gif
 build/ShoulderBreak.app/Contents/MacOS/ShoulderBreak figure wallwalk sheet.png --sheet
 # 动作名:pendulum / wallwalk / crossbody / rotation / squeeze,加 --left 看镜像版
+
+# 假装刚睡了 N 秒,用来验证休眠顺延逻辑,不用真让机器睡
+shoulder-break simulate-sleep 90
 ```
 
 纯 Swift + AppKit + SwiftUI,无第三方依赖,`swiftc` 直接编译,不需要 Xcode 工程文件。

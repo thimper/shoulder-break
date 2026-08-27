@@ -13,6 +13,9 @@ final class Scheduler {
     private var timer: Timer?
     private var preWarnShown = false
     private var wakeObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
+    /// 合盖入睡的时刻,用来算醒来时到底睡了多久
+    private var sleptAt: Date?
 
     /// 菜单栏用它来刷新显示
     var onStateChanged: (() -> Void)?
@@ -48,13 +51,17 @@ final class Scheduler {
         RunLoop.main.add(t, forMode: .common)
         timer = t
 
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.sleptAt = Date()
+            Log.info("系统即将睡眠")
+        }
+
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Log.info("系统从睡眠中唤醒,重新校准计时")
-            self?.preWarnShown = false
-            PreWarnController.shared.hide()
-            self?.tick()
+            self?.handleWake()
         }
 
         Log.info("已启动。模式=\(config.mode) 间隔=\(config.intervalMinutes)分钟 " +
@@ -90,11 +97,21 @@ final class Scheduler {
 
         let secondsToFire = state.nextFireAt - now
 
-        // 时间跳变(睡眠、关机、改系统时间)。错过多少次都只补一次,并给 60 秒缓冲
+        // 兜底:没收到入睡通知(比如断电、程序被换掉重启)时,
+        // 靠「错过了多久」推断人是不是离开过。
+        // 错过很久 = 那段时间没在用电脑,重新开始完整计时,别一回座位就弹;
+        // 只错过一小会儿 = 大概是程序卡了一下,给 60 秒缓冲照常提醒。
         if secondsToFire < -90 {
-            Log.info("检测到时间跳变,错过的提醒不补弹,60 秒后重新开始计时")
-            state.nextFireAt = now + 60
+            let missedBy = -secondsToFire
             preWarnShown = false
+            if missedBy >= Double(config.sleepResetMinutes) * 60 {
+                state.nextFireAt = computeNextFire(from: nowDate).timeIntervalSince1970
+                Log.info("错过了 \(Int(missedBy / 60)) 分钟(期间应该不在电脑前), " +
+                         "重新开始完整计时:\(describeNextFire())")
+            } else {
+                state.nextFireAt = now + 60
+                Log.info("检测到时间跳变,错过的提醒不补弹,60 秒后重新开始计时")
+            }
             state.save()
             onStateChanged?()
             return
@@ -152,6 +169,42 @@ final class Scheduler {
         if changed { state.save(); onStateChanged?() }
     }
 
+    // MARK: - 睡眠唤醒
+
+    /// 休眠这段时间人不在电脑前,肩膀没在受累,不该算进「又坐了多久」里。
+    /// 睡得久 = 已经歇过了,醒来重新开始完整计时;
+    /// 只是打个盹 = 把睡掉的时间补回去接着算。
+    private func handleWake() {
+        preWarnShown = false
+        PreWarnController.shared.hide()
+
+        let slept = sleptAt.map { Date().timeIntervalSince($0) } ?? 0
+        sleptAt = nil
+
+        guard !OverlayController.shared.isActive else {
+            // 活动进行中的顺延由遮罩自己处理,这里不插手
+            Log.info("唤醒时活动仍在进行,倒计时已由活动界面顺延")
+            tick()
+            return
+        }
+
+        let resetThreshold = Double(config.sleepResetMinutes) * 60
+        if slept >= resetThreshold {
+            state.nextFireAt = computeNextFire(from: Date()).timeIntervalSince1970
+            state.save()
+            Log.info("睡了 \(Int(slept / 60)) 分钟(超过 \(config.sleepResetMinutes) 分钟), " +
+                     "当作已经离开休息过,重新开始计时:\(describeNextFire())")
+        } else if slept > 0 {
+            state.nextFireAt += slept
+            state.save()
+            Log.info("睡了 \(Int(slept)) 秒,把这段时间补回去,下一次:\(describeNextFire())")
+        } else {
+            Log.info("系统唤醒,重新校准计时")
+        }
+        onStateChanged?()
+        tick()
+    }
+
     // MARK: - 触发
 
     private func fire() {
@@ -165,6 +218,12 @@ final class Scheduler {
         state.overlayForced = forced
         state.overlayEndsAt = endsAt
         state.save()
+
+        OverlayController.shared.onDeadlineExtended = { [weak self] newEnd in
+            guard let self else { return }
+            self.state.overlayEndsAt = newEnd.timeIntervalSince1970
+            self.state.save()
+        }
 
         OverlayController.shared.present(
             forced: forced,
@@ -251,6 +310,17 @@ final class Scheduler {
         preWarnShown = false
         PreWarnController.shared.hide()
         fire()
+    }
+
+    /// 调试用:假装刚睡了 N 秒。遮罩开着就顺延倒计时,
+    /// 没开就按真实唤醒的规则重排下一次提醒。
+    func simulateSleep(seconds: TimeInterval) {
+        if OverlayController.shared.isActive {
+            OverlayController.shared.simulateSleep(seconds: seconds)
+            return
+        }
+        sleptAt = Date().addingTimeInterval(-seconds)
+        handleWake()
     }
 
     func panic() {

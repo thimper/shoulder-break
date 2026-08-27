@@ -30,6 +30,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             OverlayController.shared.emergencyRestore()
             NSApp.terminate(nil)
         default:
+            // 调试用:simulate-sleep:90 = 假装刚睡了 90 秒
+            if command.hasPrefix("simulate-sleep:"),
+               let secs = Double(command.dropFirst("simulate-sleep:".count)) {
+                Log.info("收到模拟睡眠 \(Int(secs)) 秒")
+                Scheduler.shared.simulateSleep(seconds: secs)
+                return
+            }
             Log.warn("收到未知命令:\(command)")
         }
         menuBar.refresh()

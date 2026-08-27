@@ -74,6 +74,14 @@ case "run":
     app.setActivationPolicy(.accessory)
     app.run()
 
+case "simulate-sleep":
+    do {
+        let secs = CommandLine.arguments.count > 2 ? (Double(CommandLine.arguments[2]) ?? 60) : 60
+        IPC.send("simulate-sleep:\(secs)")
+        print("已请求模拟睡眠 \(Int(secs)) 秒")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+    }
+
 case "now", "panic", "pause", "resume", "reload", "quit":
     IPC.send(subcommand)
     let labels = ["now": "已请求立刻触发一次活动",

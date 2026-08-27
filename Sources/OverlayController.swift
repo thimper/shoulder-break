@@ -30,10 +30,18 @@ final class OverlayController {
     private var tickTimer: Timer?
     private var watchdogTimer: Timer?
     private var screenObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
+    /// 活动期间合盖入睡的时刻
     private var resignObserver: NSObjectProtocol?
 
+    private var sleptAt: Date?
     private var escDownAt: Date?
     private var endsAt: Date = .distantFuture
+    /// 上一次心跳的时刻。两次心跳之间隔太久 = 中间被系统冻结(合盖睡眠)过
+    private var lastTickAt: Date = .distantPast
+    /// 截止时刻被顺延时通知外面,好把状态文件一起改掉
+    var onDeadlineExtended: ((Date) -> Void)?
     private var stepEndsAt: Date = .distantFuture
     private var completion: ((OverlayResult) -> Void)?
     private let model = OverlayModel()
@@ -70,6 +78,7 @@ final class OverlayController {
         model.onSnooze = { [weak self] in self?.finish(.snoozed) }
 
         let now = Date()
+        lastTickAt = now
         endsAt = now.addingTimeInterval(TimeInterval(seconds))
         stepEndsAt = now.addingTimeInterval(TimeInterval(plan.first?.seconds ?? seconds))
         escDownAt = nil
@@ -108,6 +117,10 @@ final class OverlayController {
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
         if let o = screenObserver { NotificationCenter.default.removeObserver(o); screenObserver = nil }
         if let o = resignObserver { NotificationCenter.default.removeObserver(o); resignObserver = nil }
+        let ws = NSWorkspace.shared.notificationCenter
+        if let o = sleepObserver { ws.removeObserver(o); sleepObserver = nil }
+        if let o = wakeObserver { ws.removeObserver(o); wakeObserver = nil }
+        sleptAt = nil
 
         for w in windows { w.orderOut(nil); w.close() }
         windows.removeAll()
@@ -266,6 +279,14 @@ final class OverlayController {
         guard isActive, !model.finished else { return }
         let now = Date()
 
+        // 兜底:万一没收到睡眠通知,靠心跳间隔发现自己被冻结过。
+        // 正常心跳是 20 毫秒一次,隔了好几秒说明中间没在跑。
+        let gap = now.timeIntervalSince(lastTickAt)
+        lastTickAt = now
+        if gap > 3, sleptAt == nil {
+            extendDeadline(by: gap, reason: "进程被挂起")
+        }
+
         // 倒计时用绝对结束时刻算,不受定时器漂移影响
         let left = Int(ceil(endsAt.timeIntervalSince(now)))
         model.remaining = max(0, left)
@@ -292,6 +313,24 @@ final class OverlayController {
                 finish(.escaped)
             }
         }
+    }
+
+    /// 调试用:假装刚睡了 N 秒,用来验证顺延逻辑,不用真让机器睡
+    func simulateSleep(seconds: TimeInterval) {
+        extendDeadline(by: seconds, reason: "模拟睡眠")
+    }
+
+    /// 把截止时刻整体往后推。人不在电脑前的时间不能算进锻炼时长,
+    /// 否则合上盖子再打开就白捡一次。
+    private func extendDeadline(by seconds: TimeInterval, reason: String) {
+        guard isActive, seconds > 0 else { return }
+        endsAt = endsAt.addingTimeInterval(seconds)
+        stepEndsAt = stepEndsAt.addingTimeInterval(seconds)
+        lastTickAt = Date()
+        escDownAt = nil
+        model.escProgress = 0
+        Log.info("活动期间\(reason) \(Int(seconds)) 秒,倒计时顺延,这段不算锻炼时间")
+        onDeadlineExtended?(endsAt)
     }
 
     private func advanceStep(from now: Date) {
@@ -336,6 +375,25 @@ final class OverlayController {
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.rebuildWindowsForScreenChange()
+        }
+
+        // 睡眠通知比「两次心跳隔了多久」可靠得多:
+        // 实测系统唤醒后定时器的节奏未必能反映出真实流逝的时间。
+        let ws = NSWorkspace.shared.notificationCenter
+        sleepObserver = ws.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isActive else { return }
+            self.sleptAt = Date()
+        }
+        wakeObserver = ws.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isActive, let from = self.sleptAt else { return }
+            self.sleptAt = nil
+            let slept = Date().timeIntervalSince(from)
+            guard slept > 1 else { return }
+            self.extendDeadline(by: slept, reason: "系统睡眠")
         }
 
         resignObserver = NotificationCenter.default.addObserver(
