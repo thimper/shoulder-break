@@ -1,0 +1,24 @@
+{
+  "mode": "interval",
+  "intervalMinutes": 45,
+  "fixedTimes": [
+    "10:00",
+    "11:30",
+    "14:30",
+    "16:00",
+    "17:30",
+    "20:00"
+  ],
+  "activeHours": {
+    "start": "09:00",
+    "end": "22:00"
+  },
+  "exerciseSeconds": 180,
+  "snoozeMinutes": 5,
+  "maxSnoozes": 3,
+  "preWarnSeconds": 20,
+  "idleSkipSeconds": 180,
+  "escapeHoldSeconds": 10,
+  "soundEnabled": true,
+  "affectedSide": "right"
+}

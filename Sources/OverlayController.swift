@@ -1,0 +1,352 @@
+import AppKit
+import SwiftUI
+
+/// 无边框窗口默认拿不到键盘焦点,必须重写这两个属性,
+/// 否则按键吞不掉、Esc 逃生阀也失灵。
+final class OverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+final class OverlayController {
+    static let shared = OverlayController()
+    private init() {}
+
+    /// 展台模式(kiosk mode):苹果给公共展示机准备的一组开关。
+    /// 这个组合里 hideMenuBar 和 disableProcessSwitching 都依赖 hideDock,
+    /// 组合非法会直接抛 ObjC 异常崩掉,所以固定用这一套、不要随意增删。
+    /// 刻意不含 disableSessionTermination —— 那会连关机注销都禁掉,
+    /// 万一程序失控就只剩硬按电源键,不值得。
+    private let kioskOptions: NSApplication.PresentationOptions = [
+        .hideDock, .hideMenuBar, .disableProcessSwitching,
+        .disableForceQuit, .disableAppleMenu, .disableHideApplication,
+    ]
+
+    private var windows: [NSWindow] = []
+    private var primaryWindow: NSWindow?
+    private var savedPresentationOptions: NSApplication.PresentationOptions = []
+    private var savedPolicy: NSApplication.ActivationPolicy = .accessory
+    private var keyMonitor: Any?
+    private var tickTimer: Timer?
+    private var watchdogTimer: Timer?
+    private var screenObserver: NSObjectProtocol?
+    private var resignObserver: NSObjectProtocol?
+
+    private var escDownAt: Date?
+    private var endsAt: Date = .distantFuture
+    private var stepEndsAt: Date = .distantFuture
+    private var completion: ((OverlayResult) -> Void)?
+    private let model = OverlayModel()
+
+    private(set) var isActive = false
+
+    // MARK: - 显示
+
+    func present(forced: Bool,
+                 seconds: Int,
+                 snoozeRemaining: Int,
+                 escapeHoldSeconds: Int,
+                 affectedSide: String,
+                 playSound: Bool,
+                 completion: @escaping (OverlayResult) -> Void) {
+        guard !isActive else { return }
+        isActive = true
+        self.completion = completion
+
+        let plan = ExerciseLibrary.plan(totalSeconds: seconds)
+        model.exercises = plan
+        model.totalSeconds = seconds
+        model.remaining = seconds
+        model.stepIndex = 0
+        model.stepTotal = plan.first?.seconds ?? seconds
+        model.stepRemaining = plan.first?.seconds ?? seconds
+        model.forced = forced
+        model.snoozeRemaining = snoozeRemaining
+        model.escapeHoldSeconds = escapeHoldSeconds
+        model.escProgress = 0
+        model.finished = false
+        model.mirrored = (affectedSide == "left")
+        model.bothSides = (affectedSide == "both")
+        model.onSnooze = { [weak self] in self?.finish(.snoozed) }
+
+        let now = Date()
+        endsAt = now.addingTimeInterval(TimeInterval(seconds))
+        stepEndsAt = now.addingTimeInterval(TimeInterval(plan.first?.seconds ?? seconds))
+        escDownAt = nil
+
+        enterKiosk()
+        buildWindows()
+        installKeyMonitor()
+        startTimers()
+        observeSystemChanges()
+
+        if playSound { NSSound(named: NSSound.Name("Hero"))?.play() }
+        Log.info("黑幕已开启:时长 \(seconds)s,强制=\(forced),剩余延迟=\(snoozeRemaining)")
+    }
+
+    // MARK: - 关闭
+
+    private func finish(_ result: OverlayResult) {
+        guard isActive else { return }
+        if result == .completed {
+            model.finished = true
+            // 让"完成"画面停留一下再撤,免得屏幕闪一下就没了
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                self?.teardown(result)
+            }
+        } else {
+            teardown(result)
+        }
+    }
+
+    private func teardown(_ result: OverlayResult) {
+        guard isActive else { return }
+        isActive = false
+
+        tickTimer?.invalidate(); tickTimer = nil
+        watchdogTimer?.invalidate(); watchdogTimer = nil
+        if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+        if let o = screenObserver { NotificationCenter.default.removeObserver(o); screenObserver = nil }
+        if let o = resignObserver { NotificationCenter.default.removeObserver(o); resignObserver = nil }
+
+        for w in windows { w.orderOut(nil); w.close() }
+        windows.removeAll()
+        primaryWindow = nil
+
+        exitKiosk()
+
+        let cb = completion
+        completion = nil
+        Log.info("黑幕已关闭:\(result)")
+        cb?(result)
+    }
+
+    /// 外部强制解除(panic 子命令、进程退出前的兜底)
+    func forceDismiss() {
+        guard isActive else { return }
+        teardown(.escaped)
+    }
+
+    /// 进程要退出时的最后兜底:哪怕状态乱了也要把 Dock 和菜单栏还回去
+    func emergencyRestore() {
+        for w in windows { w.orderOut(nil) }
+        windows.removeAll()
+        NSApp.presentationOptions = []
+        NSApp.setActivationPolicy(.accessory)
+        isActive = false
+    }
+
+    // MARK: - 展台模式
+
+    private func enterKiosk() {
+        savedPolicy = NSApp.activationPolicy()
+        savedPresentationOptions = NSApp.presentationOptions
+        // 顺序不能反:必须先变成前台应用并抢到焦点,展台模式才生效
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.presentationOptions = kioskOptions
+    }
+
+    private func exitKiosk() {
+        NSApp.presentationOptions = savedPresentationOptions
+        NSApp.setActivationPolicy(savedPolicy == .regular ? .accessory : savedPolicy)
+    }
+
+    // MARK: - 窗口
+
+    private func buildWindows() {
+        // 注意用 screens.first 而不是 NSScreen.main:
+        // main 指的是「当前活动窗口所在的屏」,遮罩刚创建时还没有活动窗口,结果不确定;
+        // screens.first 稳定地就是菜单栏所在的那块主屏。
+        let primaryScreen = NSScreen.screens.first
+        primaryWindow = nil
+        for screen in NSScreen.screens {
+            let isPrimary = (screen == primaryScreen)
+            let w = makeWindow(for: screen, primary: isPrimary)
+            if isPrimary { primaryWindow = w }
+            windows.append(w)
+        }
+        // 键盘焦点交给显示完整界面的那块屏
+        (primaryWindow ?? windows.first)?.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeWindow(for screen: NSScreen, primary: Bool) -> NSWindow {
+        let w = OverlayWindow(contentRect: screen.frame,
+                              styleMask: [.borderless],
+                              backing: .buffered,
+                              defer: false,
+                              screen: screen)
+        // 屏蔽窗口层级 —— 屏保和登录界面用的那一档,压得住全屏应用
+        w.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
+        w.collectionBehavior = [.canJoinAllSpaces, .stationary,
+                                .fullScreenAuxiliary, .ignoresCycle]
+        w.backgroundColor = .black
+        w.isOpaque = true
+        w.hasShadow = false
+        w.isReleasedWhenClosed = false
+        w.ignoresMouseEvents = false
+        w.acceptsMouseMovedEvents = true
+
+        let scale = min(max(screen.frame.height / 900.0, 0.72), 1.7)
+        let host: NSView = primary
+            ? NSHostingView(rootView: OverlayView(model: model, scale: scale))
+            : NSHostingView(rootView: OverlaySecondaryView(model: model, scale: scale))
+        host.frame = CGRect(origin: .zero, size: screen.frame.size)
+        host.autoresizingMask = [.width, .height]
+        w.contentView = host
+
+        w.setFrame(screen.frame, display: true)
+        w.orderFrontRegardless()
+        return w
+    }
+
+    private func rebuildWindowsForScreenChange() {
+        guard isActive else { return }
+        Log.info("检测到显示器变化,重建黑幕窗口")
+        for w in windows { w.orderOut(nil); w.close() }
+        windows.removeAll()
+        buildWindows()
+    }
+
+    // MARK: - 键盘
+
+    /// 用本地事件监听器在事件分发前就截住,比重写 keyDown 可靠。
+    /// 返回 nil = 这个按键被吞掉,不会传给任何控件。
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .keyUp, .flagsChanged]
+        ) { [weak self] event in
+            self?.handleKey(event)
+            return nil
+        }
+    }
+
+    private static let escKeyCode: UInt16 = 53
+    private static let sKeyCode: UInt16 = 1
+
+    private func handleKey(_ event: NSEvent) {
+        guard isActive else { return }
+
+        // S 键 = 延迟,和点右下角按钮等价。
+        // 留这个冗余是怕鼠标点不动时把人困在屏幕前;
+        // 额度用完的强制场次里它同样无效,所以不构成绕过。
+        if event.keyCode == Self.sKeyCode, event.type == .keyDown,
+           !model.forced, !model.finished {
+            Log.info("按 S 键延迟")
+            finish(.snoozed)
+            return
+        }
+
+        guard event.keyCode == Self.escKeyCode else { return }
+        switch event.type {
+        case .keyDown:
+            if escDownAt == nil { escDownAt = Date() }   // 忽略系统的按键重复,只认第一次按下
+        case .keyUp:
+            escDownAt = nil
+            model.escProgress = 0
+        default:
+            break
+        }
+    }
+
+    // MARK: - 定时器
+
+    private func startTimers() {
+        // 20 毫秒一跳:同时驱动倒计时和 Esc 长按进度条
+        let t = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(t, forMode: .common)
+        tickTimer = t
+
+        let wd = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.watchdog() }
+        RunLoop.main.add(wd, forMode: .common)
+        watchdogTimer = wd
+    }
+
+    private func tick() {
+        guard isActive, !model.finished else { return }
+        let now = Date()
+
+        // 倒计时用绝对结束时刻算,不受定时器漂移影响
+        let left = Int(ceil(endsAt.timeIntervalSince(now)))
+        model.remaining = max(0, left)
+
+        let stepLeft = Int(ceil(stepEndsAt.timeIntervalSince(now)))
+        model.stepRemaining = max(0, stepLeft)
+
+        if stepLeft <= 0 { advanceStep(from: now) }
+
+        if left <= 0 {
+            finish(.completed)
+            return
+        }
+
+        // Esc 长按进度
+        if let down = escDownAt {
+            let held = now.timeIntervalSince(down)
+            let need = Double(model.escapeHoldSeconds)
+            model.escProgress = min(1.0, held / need)
+            if held >= need {
+                escDownAt = nil
+                model.escProgress = 0
+                Log.warn("用户长按 Esc 强制解除了本次提醒")
+                finish(.escaped)
+            }
+        }
+    }
+
+    private func advanceStep(from now: Date) {
+        let next = model.stepIndex + 1
+        guard next < model.exercises.count else {
+            // 最后一步走完但总时长还有富余,就把剩下的时间留给最后一步
+            stepEndsAt = endsAt
+            model.stepTotal = max(1, model.exercises.last?.seconds ?? 1)
+            return
+        }
+        model.stepIndex = next
+        let secs = model.exercises[next].seconds
+        model.stepTotal = secs
+        model.stepRemaining = secs
+        stepEndsAt = now.addingTimeInterval(TimeInterval(secs))
+        if stepEndsAt > endsAt { stepEndsAt = endsAt }
+    }
+
+    /// 看门狗:每秒确认一次自己还在最前面、展台模式没被系统摘掉。
+    /// 被别的应用抢走焦点(比如某些通知或输入法)时立刻抢回来。
+    private func watchdog() {
+        guard isActive else { return }
+        if !NSApp.isActive {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if NSApp.presentationOptions != kioskOptions {
+            NSApp.presentationOptions = kioskOptions
+        }
+        for w in windows where !w.isVisible {
+            w.orderFrontRegardless()
+        }
+        if let key = primaryWindow, !key.isKeyWindow {
+            key.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    // MARK: - 系统事件
+
+    private func observeSystemChanges() {
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.rebuildWindowsForScreenChange()
+        }
+
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isActive else { return }
+            // 按住 Esc 期间掉焦点会收不到 keyUp,进度条得清零免得误判成长按满
+            self.escDownAt = nil
+            self.model.escProgress = 0
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+}

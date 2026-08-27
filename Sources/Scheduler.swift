@@ -1,0 +1,305 @@
+import AppKit
+import Foundation
+
+/// 整个程序的大脑:什么时候该弹、该不该跳过、延迟怎么算。
+/// 所有时间判断都用绝对时刻,不依赖定时器精度,睡眠唤醒后也能算对。
+final class Scheduler {
+    static let shared = Scheduler()
+    private init() {}
+
+    private(set) var config = Config()
+    private(set) var state = AppState()
+
+    private var timer: Timer?
+    private var preWarnShown = false
+    private var wakeObserver: NSObjectProtocol?
+
+    /// 菜单栏用它来刷新显示
+    var onStateChanged: (() -> Void)?
+
+    // MARK: - 启动
+
+    func start() {
+        config = Config.load()
+        state = AppState.load()
+        History.prune()
+
+        let now = Date().timeIntervalSince1970
+
+        // 上一次遮罩没走完就被杀了(或者断电),把它接着盖回去
+        if state.overlayActive && state.overlayEndsAt > now + 3 && !ScreenLock.isLocked {
+            let remain = Int(state.overlayEndsAt - now)
+            Log.warn("上次的肩部活动没做完(还剩 \(remain) 秒),恢复黑幕")
+            presentOverlay(seconds: remain, forced: state.overlayForced, resumed: true)
+        } else if state.overlayActive {
+            // 时间已经过了,清掉残留标记
+            state.overlayActive = false
+            state.overlayForced = false
+            state.overlayEndsAt = 0
+            state.save()
+        }
+
+        if state.nextFireAt <= 0 || state.nextFireAt > now + 24 * 3600 {
+            state.nextFireAt = computeNextFire(from: Date()).timeIntervalSince1970
+            state.save()
+        }
+
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Log.info("系统从睡眠中唤醒,重新校准计时")
+            self?.preWarnShown = false
+            PreWarnController.shared.hide()
+            self?.tick()
+        }
+
+        Log.info("已启动。模式=\(config.mode) 间隔=\(config.intervalMinutes)分钟 " +
+                 "时长=\(config.exerciseSeconds)秒 生效时段=\(config.activeHours.start)-\(config.activeHours.end)")
+        Log.info("下一次提醒:\(describeNextFire())")
+        onStateChanged?()
+    }
+
+    // MARK: - 每秒心跳
+
+    private func tick() {
+        guard !OverlayController.shared.isActive else { return }
+        let nowDate = Date()
+        let now = nowDate.timeIntervalSince1970
+        var changed = false
+
+        // 暂停到期
+        if state.pausedUntil > 0 && state.pausedUntil <= now {
+            state.pausedUntil = 0
+            changed = true
+            Log.info("暂停已到期,恢复提醒")
+        }
+        if state.isPaused {
+            if preWarnShown { PreWarnController.shared.hide(); preWarnShown = false }
+            if changed { state.save(); onStateChanged?() }
+            return
+        }
+
+        if state.nextFireAt <= 0 {
+            state.nextFireAt = computeNextFire(from: nowDate).timeIntervalSince1970
+            changed = true
+        }
+
+        let secondsToFire = state.nextFireAt - now
+
+        // 时间跳变(睡眠、关机、改系统时间)。错过多少次都只补一次,并给 60 秒缓冲
+        if secondsToFire < -90 {
+            Log.info("检测到时间跳变,错过的提醒不补弹,60 秒后重新开始计时")
+            state.nextFireAt = now + 60
+            preWarnShown = false
+            state.save()
+            onStateChanged?()
+            return
+        }
+
+        // 生效时段外:把闹钟压到下一个时段开头
+        if !config.isWithinActiveHours(nowDate) {
+            let start = config.nextActiveWindowStart(after: nowDate).timeIntervalSince1970
+            if abs(state.nextFireAt - start) > 1 {
+                state.nextFireAt = start
+                preWarnShown = false
+                changed = true
+                Log.info("当前不在生效时段,下一次提醒排到 \(describeNextFire())")
+            }
+            if changed { state.save(); onStateChanged?() }
+            return
+        }
+
+        // 预告横幅
+        if !preWarnShown, config.preWarnSeconds > 0,
+           secondsToFire <= Double(config.preWarnSeconds), secondsToFire > 0 {
+            PreWarnController.shared.show(seconds: Int(ceil(secondsToFire)),
+                                          playSound: config.soundEnabled)
+            preWarnShown = true
+        }
+
+        if secondsToFire <= 0 {
+            preWarnShown = false
+            PreWarnController.shared.hide()
+
+            // 屏幕锁着 / 切到了别的用户 —— 人根本不在,弹了也是白弹
+            if ScreenLock.isLocked || !ScreenLock.isOnConsole {
+                Log.info("屏幕处于锁定状态,跳过本次并重排")
+                History.append(.skippedIdle, snoozeUsed: state.snoozeUsed)
+                state.nextFireAt = computeNextFire(from: nowDate).timeIntervalSince1970
+                state.save()
+                onStateChanged?()
+                return
+            }
+
+            // 人已经离开电脑,本身就是在休息,不用弹
+            let idle = Idle.seconds()
+            if config.idleSkipSeconds > 0 && idle >= Double(config.idleSkipSeconds) {
+                Log.info("已 \(Int(idle)) 秒没碰键鼠,判定人不在,跳过本次并重排")
+                History.append(.skippedIdle, snoozeUsed: state.snoozeUsed)
+                state.nextFireAt = computeNextFire(from: nowDate).timeIntervalSince1970
+                state.save()
+                onStateChanged?()
+                return
+            }
+            fire()
+            return
+        }
+
+        if changed { state.save(); onStateChanged?() }
+    }
+
+    // MARK: - 触发
+
+    private func fire() {
+        let forced = state.snoozeUsed >= config.maxSnoozes
+        presentOverlay(seconds: config.exerciseSeconds, forced: forced, resumed: false)
+    }
+
+    private func presentOverlay(seconds: Int, forced: Bool, resumed: Bool) {
+        let endsAt = Date().timeIntervalSince1970 + Double(seconds)
+        state.overlayActive = true
+        state.overlayForced = forced
+        state.overlayEndsAt = endsAt
+        state.save()
+
+        OverlayController.shared.present(
+            forced: forced,
+            seconds: seconds,
+            snoozeRemaining: max(0, config.maxSnoozes - state.snoozeUsed),
+            escapeHoldSeconds: config.escapeHoldSeconds,
+            affectedSide: config.affectedSide,
+            playSound: config.soundEnabled && !resumed
+        ) { [weak self] result in
+            self?.handleResult(result)
+        }
+        onStateChanged?()
+    }
+
+    private func handleResult(_ result: OverlayResult) {
+        let nowDate = Date()
+        let now = nowDate.timeIntervalSince1970
+
+        state.overlayActive = false
+        state.overlayForced = false
+        state.overlayEndsAt = 0
+
+        switch result {
+        case .completed:
+            History.append(.completed, snoozeUsed: state.snoozeUsed)
+            state.snoozeUsed = 0
+            state.lastCompletedAt = now
+            state.nextFireAt = computeNextFire(from: nowDate).timeIntervalSince1970
+
+        case .snoozed:
+            state.snoozeUsed += 1
+            History.append(.snoozed, snoozeUsed: state.snoozeUsed)
+            state.nextFireAt = now + Double(config.snoozeMinutes) * 60
+            let left = max(0, config.maxSnoozes - state.snoozeUsed)
+            Log.info("延迟 \(config.snoozeMinutes) 分钟,还剩 \(left) 次延迟机会" +
+                     (left == 0 ? " —— 下一次将无法延迟" : ""))
+
+        case .escaped:
+            History.append(.escaped, snoozeUsed: state.snoozeUsed)
+            state.snoozeUsed = 0
+            state.nextFireAt = computeNextFire(from: nowDate).timeIntervalSince1970
+            Log.warn("本次被强制跳过,已记入逃跑次数")
+        }
+
+        preWarnShown = false
+        state.save()
+        Log.info("下一次提醒:\(describeNextFire())")
+        onStateChanged?()
+    }
+
+    // MARK: - 下次时刻计算
+
+    private func computeNextFire(from date: Date) -> Date {
+        if config.mode == "fixed" {
+            return nextFixedTime(after: date)
+        }
+        var candidate = date.addingTimeInterval(Double(config.intervalMinutes) * 60)
+        if !config.isWithinActiveHours(candidate) {
+            // 落到了下班之后,推到下一个时段开始再等 5 分钟,别一进时段就弹
+            candidate = config.nextActiveWindowStart(after: candidate).addingTimeInterval(300)
+        }
+        return candidate
+    }
+
+    private func nextFixedTime(after date: Date) -> Date {
+        let times = config.fixedTimes.compactMap(Config.minutesOfDay).sorted()
+        guard !times.isEmpty else {
+            return date.addingTimeInterval(Double(config.intervalMinutes) * 60)
+        }
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: date)
+        for m in times {
+            let t = today.addingTimeInterval(Double(m) * 60)
+            if t.timeIntervalSince(date) > 30 { return t }
+        }
+        return today.addingTimeInterval(86400 + Double(times[0]) * 60)
+    }
+
+    // MARK: - 外部命令
+
+    func triggerNow() {
+        guard !OverlayController.shared.isActive else { return }
+        Log.info("收到「现在就做一次」")
+        preWarnShown = false
+        PreWarnController.shared.hide()
+        fire()
+    }
+
+    func panic() {
+        Log.warn("收到 panic 命令,强制解除黑幕")
+        PreWarnController.shared.hide()
+        OverlayController.shared.forceDismiss()
+    }
+
+    func pause(hours: Double) {
+        state.pausedUntil = Date().timeIntervalSince1970 + hours * 3600
+        History.append(.skippedPaused, snoozeUsed: state.snoozeUsed)
+        state.save()
+        PreWarnController.shared.hide()
+        preWarnShown = false
+        Log.info("已暂停 \(Int(hours * 60)) 分钟")
+        onStateChanged?()
+    }
+
+    func resumeFromPause() {
+        state.pausedUntil = 0
+        state.nextFireAt = computeNextFire(from: Date()).timeIntervalSince1970
+        state.save()
+        Log.info("已取消暂停,下一次提醒:\(describeNextFire())")
+        onStateChanged?()
+    }
+
+    func reloadConfig() {
+        config = Config.load()
+        Log.info("配置已重新载入:间隔=\(config.intervalMinutes)分钟 时长=\(config.exerciseSeconds)秒")
+        state.nextFireAt = computeNextFire(from: Date()).timeIntervalSince1970
+        state.save()
+        onStateChanged?()
+    }
+
+    // MARK: - 展示用
+
+    var secondsUntilNextFire: Int {
+        Int((state.nextFireAt - Date().timeIntervalSince1970).rounded())
+    }
+
+    func describeNextFire() -> String {
+        let d = Date(timeIntervalSince1970: state.nextFireAt)
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        let mins = max(0, secondsUntilNextFire) / 60
+        return "\(f.string(from: d))(约 \(mins) 分钟后)"
+    }
+
+    var pausedRemainingMinutes: Int {
+        max(0, Int((state.pausedUntil - Date().timeIntervalSince1970) / 60))
+    }
+}
