@@ -19,6 +19,9 @@ enum Preview {
         model.escapeHoldSeconds = 10
         model.mirrored = (affectedSide == "left")
         model.bothSides = (affectedSide == "both")
+        model.breathingOn = true
+        model.ambientAvailable = true
+        model.startedAt = Date().addingTimeInterval(-2.4)   // 定在吸气快满的位置
 
         // 按已过秒数定位到对应的动作步骤
         var acc = 0

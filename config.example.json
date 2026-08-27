@@ -21,5 +21,13 @@
   "escapeHoldSeconds": 10,
   "soundEnabled": true,
   "affectedSide": "right",
-  "sleepResetMinutes": 10
+  "sleepResetMinutes": 10,
+  "ambientStyle": "bowl",
+  "ambientEnabled": true,
+  "ambientVolume": 0.28,
+  "stepChimeEnabled": true,
+  "chimeVolume": 0.45,
+  "breathingGuide": true,
+  "breathInSeconds": 4,
+  "breathOutSeconds": 6
 }

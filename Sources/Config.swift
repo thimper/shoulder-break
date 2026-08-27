@@ -32,6 +32,21 @@ struct Config {
     /// 休眠/合盖超过这么多分钟,就认为你已经离开过、肩膀歇过了,
     /// 醒来重新开始完整计时;不到这个数就只是把错过的时间补回去
     var sleepResetMinutes: Int = 10
+
+    /// 黑幕期间的背景音。风格:
+    /// bowl 颂钵(默认,音符卡在呼吸节拍上)/ rain 雨声 /
+    /// pad-warm 温暖和弦 / pad-low 低音和弦 / off 关掉
+    var ambientStyle: String = "bowl"
+    var ambientEnabled: Bool = true
+    var ambientVolume: Double = 0.28
+    /// 动作切换时响一声,不用盯着屏幕也知道该换了
+    var stepChimeEnabled: Bool = true
+    var chimeVolume: Double = 0.45
+    /// 呼吸引导:背景音跟着涨落,黑幕上配一个张缩的圆环。
+    /// 拉伸时呼气能让肌肉放松、活动度更大
+    var breathingGuide: Bool = true
+    var breathInSeconds: Int = 4
+    var breathOutSeconds: Int = 6
 }
 
 // 放在 extension 里实现 Codable,这样 Swift 仍会自动生成带默认值的逐成员构造器,
@@ -53,6 +68,14 @@ extension Config: Codable {
         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
         affectedSide = try c.decodeIfPresent(String.self, forKey: .affectedSide) ?? d.affectedSide
         sleepResetMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepResetMinutes) ?? d.sleepResetMinutes
+        ambientStyle = try c.decodeIfPresent(String.self, forKey: .ambientStyle) ?? d.ambientStyle
+        ambientEnabled = try c.decodeIfPresent(Bool.self, forKey: .ambientEnabled) ?? d.ambientEnabled
+        ambientVolume = try c.decodeIfPresent(Double.self, forKey: .ambientVolume) ?? d.ambientVolume
+        stepChimeEnabled = try c.decodeIfPresent(Bool.self, forKey: .stepChimeEnabled) ?? d.stepChimeEnabled
+        chimeVolume = try c.decodeIfPresent(Double.self, forKey: .chimeVolume) ?? d.chimeVolume
+        breathingGuide = try c.decodeIfPresent(Bool.self, forKey: .breathingGuide) ?? d.breathingGuide
+        breathInSeconds = try c.decodeIfPresent(Int.self, forKey: .breathInSeconds) ?? d.breathInSeconds
+        breathOutSeconds = try c.decodeIfPresent(Int.self, forKey: .breathOutSeconds) ?? d.breathOutSeconds
         clampToSaneRanges()
     }
 
@@ -68,6 +91,14 @@ extension Config: Codable {
         if mode != "interval" && mode != "fixed" { mode = "interval" }
         if !["right", "left", "both"].contains(affectedSide) { affectedSide = "right" }
         sleepResetMinutes = min(max(sleepResetMinutes, 1), 240)
+        if !["bowl", "rain", "pad-warm", "pad-low", "off"].contains(ambientStyle) {
+            ambientStyle = "bowl"
+        }
+        if ambientStyle == "off" { ambientEnabled = false }
+        ambientVolume = min(max(ambientVolume, 0), 1)
+        chimeVolume = min(max(chimeVolume, 0), 1)
+        breathInSeconds = min(max(breathInSeconds, 2), 20)
+        breathOutSeconds = min(max(breathOutSeconds, 2), 20)
     }
 }
 

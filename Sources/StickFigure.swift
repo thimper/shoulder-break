@@ -193,7 +193,7 @@ struct StickFigureView: View {
     let dim: Color
 
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             let phase = (t / motion.cycleSeconds).truncatingRemainder(dividingBy: 1.0)
             StickFigureCanvas(motion: motion, phase: phase, mirrored: mirrored,

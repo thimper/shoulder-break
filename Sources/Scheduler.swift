@@ -225,13 +225,28 @@ final class Scheduler {
             self.state.save()
         }
 
+        OverlayController.shared.onMuteChanged = { [weak self] muted in
+            guard let self else { return }
+            self.state.ambientMuted = muted
+            self.state.save()
+        }
+
         OverlayController.shared.present(
             forced: forced,
             seconds: seconds,
             snoozeRemaining: max(0, config.maxSnoozes - state.snoozeUsed),
             escapeHoldSeconds: config.escapeHoldSeconds,
             affectedSide: config.affectedSide,
-            playSound: config.soundEnabled && !resumed
+            playSound: config.soundEnabled && !resumed,
+            audio: AudioSettings(ambientStyle: AmbientStyle(rawValue: config.ambientStyle) ?? .bowl,
+                                 ambientEnabled: config.ambientEnabled && config.soundEnabled,
+                                 ambientVolume: config.ambientVolume,
+                                 stepChimeEnabled: config.stepChimeEnabled && config.soundEnabled,
+                                 chimeVolume: config.chimeVolume,
+                                 breathingGuide: config.breathingGuide,
+                                 breathInSeconds: Double(config.breathInSeconds),
+                                 breathOutSeconds: Double(config.breathOutSeconds)),
+            muted: state.ambientMuted
         ) { [weak self] result in
             self?.handleResult(result)
         }

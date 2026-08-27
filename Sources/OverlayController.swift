@@ -8,6 +8,18 @@ final class OverlayWindow: NSWindow {
     override var canBecomeMain: Bool { true }
 }
 
+/// 黑幕里跟声音有关的一组设置,打包传进来免得参数列表越拖越长
+struct AudioSettings {
+    var ambientStyle: AmbientStyle
+    var ambientEnabled: Bool
+    var ambientVolume: Double
+    var stepChimeEnabled: Bool
+    var chimeVolume: Double
+    var breathingGuide: Bool
+    var breathInSeconds: Double
+    var breathOutSeconds: Double
+}
+
 final class OverlayController {
     static let shared = OverlayController()
     private init() {}
@@ -42,6 +54,13 @@ final class OverlayController {
     private var lastTickAt: Date = .distantPast
     /// 截止时刻被顺延时通知外面,好把状态文件一起改掉
     var onDeadlineExtended: ((Date) -> Void)?
+    /// 用户在黑幕上点了静音,通知外面记进状态文件
+    var onMuteChanged: ((Bool) -> Void)?
+
+    private var audio = AudioSettings(ambientStyle: .bowl, ambientEnabled: false, ambientVolume: 0.28,
+                                      stepChimeEnabled: false, chimeVolume: 0.45,
+                                      breathingGuide: false,
+                                      breathInSeconds: 4, breathOutSeconds: 6)
     private var stepEndsAt: Date = .distantFuture
     private var completion: ((OverlayResult) -> Void)?
     private let model = OverlayModel()
@@ -56,6 +75,8 @@ final class OverlayController {
                  escapeHoldSeconds: Int,
                  affectedSide: String,
                  playSound: Bool,
+                 audio: AudioSettings,
+                 muted: Bool,
                  completion: @escaping (OverlayResult) -> Void) {
         guard !isActive else { return }
         isActive = true
@@ -75,6 +96,12 @@ final class OverlayController {
         model.finished = false
         model.mirrored = (affectedSide == "left")
         model.bothSides = (affectedSide == "both")
+        self.audio = audio
+        model.breathingOn = audio.breathingGuide && audio.ambientEnabled
+        model.startedAt = Date()
+        model.ambientAvailable = audio.ambientEnabled
+        model.muted = muted
+        model.onToggleMute = { [weak self] in self?.toggleMute() }
         model.onSnooze = { [weak self] in self?.finish(.snoozed) }
 
         let now = Date()
@@ -90,6 +117,7 @@ final class OverlayController {
         observeSystemChanges()
 
         if playSound { NSSound(named: NSSound.Name("Hero"))?.play() }
+        startAudio(muted: muted)
         Log.info("黑幕已开启:时长 \(seconds)s,强制=\(forced),剩余延迟=\(snoozeRemaining)")
     }
 
@@ -99,6 +127,9 @@ final class OverlayController {
         guard isActive else { return }
         if result == .completed {
             model.finished = true
+            if audio.stepChimeEnabled {
+                AmbientAudio.shared.playCompletionChime(volume: audio.chimeVolume)
+            }
             // 让"完成"画面停留一下再撤,免得屏幕闪一下就没了
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
                 self?.teardown(result)
@@ -126,6 +157,7 @@ final class OverlayController {
         windows.removeAll()
         primaryWindow = nil
 
+        AmbientAudio.shared.stop()
         exitKiosk()
 
         let cb = completion
@@ -142,6 +174,7 @@ final class OverlayController {
 
     /// 进程要退出时的最后兜底:哪怕状态乱了也要把 Dock 和菜单栏还回去
     func emergencyRestore() {
+        AmbientAudio.shared.stop(fadeOutSeconds: 0)
         for w in windows { w.orderOut(nil) }
         windows.removeAll()
         NSApp.presentationOptions = []
@@ -287,12 +320,16 @@ final class OverlayController {
             extendDeadline(by: gap, reason: "进程被挂起")
         }
 
-        // 倒计时用绝对结束时刻算,不受定时器漂移影响
+        // 倒计时用绝对结束时刻算,不受定时器漂移影响。
+        // 注意只在数字真的变了才写回去:SwiftUI 只要被赋值就重绘,
+        // 心跳是 20 毫秒一次,无条件赋值等于让整个界面每秒重画 50 次。
         let left = Int(ceil(endsAt.timeIntervalSince(now)))
-        model.remaining = max(0, left)
+        let newRemaining = max(0, left)
+        if model.remaining != newRemaining { model.remaining = newRemaining }
 
         let stepLeft = Int(ceil(stepEndsAt.timeIntervalSince(now)))
-        model.stepRemaining = max(0, stepLeft)
+        let newStepRemaining = max(0, stepLeft)
+        if model.stepRemaining != newStepRemaining { model.stepRemaining = newStepRemaining }
 
         if stepLeft <= 0 { advanceStep(from: now) }
 
@@ -305,7 +342,9 @@ final class OverlayController {
         if let down = escDownAt {
             let held = now.timeIntervalSince(down)
             let need = Double(model.escapeHoldSeconds)
-            model.escProgress = min(1.0, held / need)
+            let p = min(1.0, held / need)
+            // 进度条只有百分之一的变化才值得重绘一次
+            if abs(model.escProgress - p) > 0.01 { model.escProgress = p }
             if held >= need {
                 escDownAt = nil
                 model.escProgress = 0
@@ -318,6 +357,24 @@ final class OverlayController {
     /// 调试用:假装刚睡了 N 秒,用来验证顺延逻辑,不用真让机器睡
     func simulateSleep(seconds: TimeInterval) {
         extendDeadline(by: seconds, reason: "模拟睡眠")
+    }
+
+    private func startAudio(muted: Bool) {
+        guard audio.ambientEnabled else { return }
+        AmbientAudio.shared.start(style: audio.ambientStyle,
+                                  volume: audio.ambientVolume,
+                                  muted: muted,
+                                  breathing: audio.breathingGuide,
+                                  breathInSeconds: audio.breathInSeconds,
+                                  breathOutSeconds: audio.breathOutSeconds)
+    }
+
+    private func toggleMute() {
+        let next = !model.muted
+        model.muted = next
+        AmbientAudio.shared.setMuted(next)
+        onMuteChanged?(next)
+        Log.info(next ? "背景音已静音(提示音保留)" : "背景音已恢复")
     }
 
     /// 把截止时刻整体往后推。人不在电脑前的时间不能算进锻炼时长,
@@ -342,6 +399,10 @@ final class OverlayController {
             return
         }
         model.stepIndex = next
+        // 做动作时人常常低着头、面对墙或者闭着眼,响一声比屏幕上换字管用
+        if audio.stepChimeEnabled {
+            AmbientAudio.shared.playStepChime(volume: audio.chimeVolume)
+        }
         let secs = model.exercises[next].seconds
         model.stepTotal = secs
         model.stepRemaining = secs

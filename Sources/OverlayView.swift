@@ -72,14 +72,17 @@ struct OverlayView: View {
                     .foregroundColor(model.forced ? Palette.warn : Palette.dim)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2 * scale) {
-                Text(mmss(model.remaining))
-                    .font(.system(size: 60 * scale, weight: .thin, design: .rounded)
-                        .monospacedDigit())
-                    .foregroundColor(Palette.text)
-                Text("剩余总时长")
-                    .font(.system(size: 12 * scale))
-                    .foregroundColor(Palette.faint)
+            HStack(alignment: .top, spacing: 18 * scale) {
+                if model.ambientAvailable { muteButton }
+                VStack(alignment: .trailing, spacing: 2 * scale) {
+                    Text(mmss(model.remaining))
+                        .font(.system(size: 60 * scale, weight: .thin, design: .rounded)
+                            .monospacedDigit())
+                        .foregroundColor(Palette.text)
+                    Text("剩余总时长")
+                        .font(.system(size: 12 * scale))
+                        .foregroundColor(Palette.faint)
+                }
             }
         }
     }
@@ -143,8 +146,32 @@ struct OverlayView: View {
                 Text(model.bothSides ? "双侧都做" : (model.mirrored ? "高亮的是左肩" : "高亮的是右肩"))
                     .font(.system(size: 11 * scale))
                     .foregroundColor(Palette.faint)
+
+                if model.breathingOn {
+                    BreathingRing(startedAt: model.startedAt, scale: scale,
+                                  accent: Palette.accent, dim: Palette.dim,
+                                  faint: Palette.faint)
+                        .padding(.top, 8 * scale)
+                }
             }
         }
+    }
+
+    /// 只静音背景音,提示音保留 —— 提示音是「该换动作了」的功能信息,不该一起关掉
+    private var muteButton: some View {
+        Button(action: { model.onToggleMute?() }) {
+            Image(systemName: model.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 15 * scale))
+                .foregroundColor(model.muted ? Palette.faint : Palette.accent)
+                .frame(width: 38 * scale, height: 38 * scale)
+                .background(
+                    Circle().fill(Color.white.opacity(model.muted ? 0.04 : 0.08))
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(model.muted ? "打开背景音" : "静音背景音(提示音保留)")
+        .padding(.top, 8 * scale)
     }
 
     private var stepRing: some View {
@@ -326,6 +353,45 @@ struct OverlaySecondaryView: View {
                 Text("请看主屏幕操作")
                     .font(.system(size: 13 * scale))
                     .foregroundColor(Palette.faint)
+            }
+        }
+    }
+}
+
+/// 跟着呼吸张缩的圆环。和背景音共用同一套公式、同一个起点,
+/// 所以圆环张到最大时声音也最饱满,看到的和听到的是一回事。
+/// 拉伸时跟着呼气能让肌肉放松、活动度更大。
+struct BreathingRing: View {
+    let startedAt: Date
+    let scale: CGFloat
+    let accent: Color
+    let dim: Color
+    let faint: Color
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
+            let elapsed = timeline.date.timeIntervalSince(startedAt)
+            let level = AmbientAudio.shared.breathLevel(at: elapsed)
+            let inhaling = AmbientAudio.shared.isInhaling(at: elapsed)
+            let size = (22 + 24 * level) * scale
+
+            VStack(spacing: 5 * scale) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1.5 * scale)
+                        .frame(width: 50 * scale, height: 50 * scale)
+                    Circle()
+                        .fill(accent.opacity(0.08 + 0.20 * level))
+                        .frame(width: size, height: size)
+                    Circle()
+                        .stroke(accent.opacity(0.40 + 0.45 * level), lineWidth: 2.0 * scale)
+                        .frame(width: size, height: size)
+                }
+                .frame(width: 52 * scale, height: 52 * scale)
+
+                Text(inhaling ? "吸气" : "呼气")
+                    .font(.system(size: 11 * scale, weight: .medium))
+                    .foregroundColor(inhaling ? accent.opacity(0.9) : faint)
             }
         }
     }

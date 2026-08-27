@@ -30,6 +30,13 @@ final class OverlayModel: ObservableObject {
     @Published var mirrored: Bool = false
     @Published var bothSides: Bool = false
 
+    /// 呼吸引导:圆环和背景音用同一个起点算相位,保证看到的和听到的一致
+    @Published var breathingOn: Bool = false
+    @Published var startedAt: Date = Date()
+    @Published var ambientAvailable: Bool = false
+    @Published var muted: Bool = false
+    var onToggleMute: (() -> Void)?
+
     var onSnooze: (() -> Void)?
 
     var currentExercise: Exercise? {

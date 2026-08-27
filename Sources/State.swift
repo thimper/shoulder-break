@@ -19,6 +19,10 @@ struct AppState {
     /// 手动暂停的到期时刻,0 表示没暂停
     var pausedUntil: Double = 0
     var lastCompletedAt: Double = 0
+
+    /// 在黑幕上点过静音。记下来是为了下次黑幕沿用,
+    /// 临时想安静一下不用去翻配置文件
+    var ambientMuted: Bool = false
 }
 
 extension AppState: Codable {
@@ -32,6 +36,7 @@ extension AppState: Codable {
         overlayEndsAt = try c.decodeIfPresent(Double.self, forKey: .overlayEndsAt) ?? d.overlayEndsAt
         pausedUntil = try c.decodeIfPresent(Double.self, forKey: .pausedUntil) ?? d.pausedUntil
         lastCompletedAt = try c.decodeIfPresent(Double.self, forKey: .lastCompletedAt) ?? d.lastCompletedAt
+        ambientMuted = try c.decodeIfPresent(Bool.self, forKey: .ambientMuted) ?? d.ambientMuted
     }
 }
 

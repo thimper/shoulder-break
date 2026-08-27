@@ -94,6 +94,38 @@ case "now", "panic", "pause", "resume", "reload", "quit":
     // 广播是异步的,给一点时间送达再退出
     RunLoop.current.run(until: Date().addingTimeInterval(0.4))
 
+case "audition":
+    do {
+        let args = CommandLine.arguments
+        let dir = args.count > 2 ? args[2] : "/tmp"
+        let secs = args.count > 3 ? (Double(args[3]) ?? 22) : 22
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+        for style in AmbientStyle.allCases {
+            let path = "\(dir)/sb-\(style.rawValue).caf"
+            let ok = AmbientAudio.shared.exportStyle(style, to: path,
+                                                    seconds: secs, volume: 0.42)
+            print(ok ? "  \(style.rawValue) → \(path)" : "  \(style.rawValue) 导出失败")
+        }
+    }
+
+case "export-audio":
+    do {
+        let args = CommandLine.arguments
+        let path = args.count > 2 ? args[2] : "ambient-sample.caf"
+        let secs = args.count > 3 ? (Double(args[3]) ?? 14) : 14
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+        let cfg = Config.load()
+        let ok = AmbientAudio.shared.exportSample(
+            to: path, seconds: secs, volume: cfg.ambientVolume,
+            breathing: cfg.breathingGuide,
+            breathInSeconds: Double(cfg.breathInSeconds),
+            breathOutSeconds: Double(cfg.breathOutSeconds))
+        print(ok ? "已导出试听文件:\(path)" : "导出失败")
+        if !ok { exit(1) }
+    }
+
 case "figure":
     do {
         let args = CommandLine.arguments
